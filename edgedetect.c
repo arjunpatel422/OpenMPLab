@@ -4,8 +4,7 @@
 
 float * array_create(const int* size)
 {
-	float * ptr = malloc((*size));
-	return ptr;
+	return malloc(*size);
 }
 
 void array_free(float *ptr)
@@ -14,20 +13,14 @@ void array_free(float *ptr)
 		free(ptr);
 }
 
-void convert_grayscale(Image *img, float *gray)
+void convert_grayscale(float* r, float* g, float* b, float* gray, const int* size)
 {
 	int position;
-	const int size=img->w*img->h;
-	for (position= 0; position < size; position++)
-	{
-		float r = img->r[position];
-		float g = img->g[position];
-		float b = img->b[position];
-		gray[position] = (r + g + b) / 3.f;
-	}
+	for (position= 0; position < (*size); position++)
+		gray[position] = (r[position] + g[position] + b[position]) / 3.f;
 }
 
-float convolve(float *kernel, float *ringbuf, const int* ksize, int i0)
+float convolve(float* kernel, float* ringbuf, const int* ksize, int i0)
 {
 	int i;
 	float sum = 0.f;
@@ -39,20 +32,19 @@ float convolve(float *kernel, float *ringbuf, const int* ksize, int i0)
 	return sum;
 }
 
-void gaussian_blur(float *src, float *dst, const int* width, const int* height, float sigma)
+void gaussian_blur(float* src, float* dst, const int* width, const int* height, float sigma)
 {
-	int x, y, i,position;
+	int x, y, i,position,bufi0;
 	const int ksize = (int)(sigma * 2.f * 4.f + 1) | 1;
 	const int ksizeColumnLimit=ksize-1;
 	const int halfkColumn = ksize / 2;
-	const int ksizeRowLimit=ksizeColumnLimit*(*width);
 	const int halfkRow=halfkColumn*(*width);
 	const int xmax = (*width) - halfkColumn;
 	const int ymax = (*height)-halfkRow;
 	const int maxColumnLimit=(*width)-1;
 	const int maxRowLimit=(*height)-(*width);
 	float scale = -0.5f/(sigma*sigma);
-	float sum = 0.f,s,t;
+	float sum = 0.f,tmp,t;
 	float *kernel, *ringbuf;
 
 	// if sigma too small, just copy src to dst
@@ -69,8 +61,8 @@ void gaussian_blur(float *src, float *dst, const int* width, const int* height, 
 
 	for (i = 0; i < ksize; i++)
 	{
-		float x = (float)(i - halfkColumn);
-		float t = expf(scale * x * x);
+		tmp = (float)(i - halfkColumn);
+		t = expf(scale * tmp * tmp);
 		kernel[i] = t;
 		sum += t;
 	}
@@ -82,54 +74,52 @@ void gaussian_blur(float *src, float *dst, const int* width, const int* height, 
 	// blur each row
 	for (y = 0; y < (*height); y+=(*width))
 	{
-		int bufi0 = ksizeColumnLimit;
-		float tmp = src[y];
+		bufi0 = ksizeColumnLimit;
+		tmp = src[y];
 		for (x = 0; x < halfkColumn  ; x++) ringbuf[x] = tmp;
-		for (     ; x < ksizeColumnLimit; x++) ringbuf[x] = src[y+x-halfkColumn];
-
+		for ( position=y; x < ksizeColumnLimit; x++) ringbuf[x] = src[position++];
+		position=y;
 		for (x = 0; x < xmax; x++)
 		{
-			ringbuf[bufi0++] = src[y+x+halfkColumn];
+			ringbuf[bufi0++] = src[position+halfkColumn];
 			if (bufi0 == ksize) bufi0 = 0;
-			dst[y+x] = convolve(kernel, ringbuf, &ksize, bufi0);
+			dst[position++] = convolve(kernel, ringbuf, &ksize, bufi0);
 		}
 
-		tmp = src[y+maxColumnLimit];
-		for ( ; x < (*width); x++)
+		for (tmp = src[y+maxColumnLimit] ; x < (*width); x++)
 		{
 			ringbuf[bufi0++] = tmp;
 			if (bufi0 == ksize) bufi0 = 0;
-			dst[y+x] = convolve(kernel, ringbuf, &ksize, bufi0);
+			dst[position++] = convolve(kernel, ringbuf, &ksize, bufi0);
 		}
 	}
 
 	// blur each column
 	for (x = 0; x < (*width); x++)
 	{
-		int bufi0 =ksizeColumnLimit;
-		float tmp = dst[x];
+		bufi0 =ksizeColumnLimit;
+		tmp = dst[x];
 		for (y = 0; y < halfkColumn  ; y++) ringbuf[y] = tmp;
 		for (position=x; y < ksizeColumnLimit; y++)
 		{
 			ringbuf[y] = dst[position];
 			position+=(*width);
 		}
-
+		position=x;
 		for (y = 0; y < ymax; y+=(*width))
 		{
-			ringbuf[bufi0++] = dst[y+halfkRow+x];
+			ringbuf[bufi0++] = dst[position+halfkRow];
 			if (bufi0 == ksize) bufi0 = 0;
-
-			dst[y+x] = convolve(kernel, ringbuf, &ksize, bufi0);
+			dst[position] = convolve(kernel, ringbuf, &ksize, bufi0);
+			position+=(*width);
 		}
 
-		tmp = dst[maxRowLimit+x];
-		for ( ; y < (*height); y+=(*width))
+		for (tmp = dst[maxRowLimit+x]; y < (*height); y+=(*width))
 		{
 			ringbuf[bufi0++] = tmp;
 			if (bufi0 == ksize) bufi0 = 0;
-
-			dst[y+x] = convolve(kernel, ringbuf, &ksize, bufi0);
+			dst[position] = convolve(kernel, ringbuf, &ksize, bufi0);
+			position+=(*width);
 		}
 	}
 
@@ -138,7 +128,7 @@ void gaussian_blur(float *src, float *dst, const int* width, const int* height, 
 	free(ringbuf);
 }
 
-void compute_gradient(float *src, const int* width, const int* height, float *g_mag, float *g_ang)
+void compute_gradient(float* src, const int* width, const int* height, float* g_mag, float* g_ang)
 {
 	// Sobel mask values
 	const float mx[]={-0.25f, 0.f, 0.25f,-0.5f , 0.f, 0.5f,-0.25f, 0.f, 0.25f};
@@ -171,45 +161,47 @@ void compute_gradient(float *src, const int* width, const int* height, float *g_
 	}
 }
 
-int is_edge(float *g_mag, float *g_ang, float threshold, int x, int y, const int* width, const int* height)
+int is_edge(float* g_mag, float* g_ang, float* threshold, const int* x, const int* y, const int* width, const int* height)
 {
-	if (g_mag[y+x] >= threshold)
+	int position=(*y)+(*x);
+	if (g_mag[position] >= (*threshold))
 	{
-		int dir = ((int) roundf(g_ang[y+x]/M_PI_4) + 4) % 4;
-
+		int dir = ((int) roundf(g_ang[position]/M_PI_4) + 4) % 4;
 		// horizontal gradient : vertical edge
 		if (dir == 0)
 		{
-			float left  = g_mag[y+x - (x>0  )];
-			float right = g_mag[y+x + (x<(*width)-1)];
-			return (g_mag[y+x] >= left && g_mag[y+x] >= right);
+			float left  = g_mag[position- ((*x)>0  )];
+			float right = g_mag[position+ ((*x)<(*width)-1)];
+			return (g_mag[position] >= left && g_mag[position] >= right);
 		}
+		int belowLimit=(((*y)<(*height)-(*width))?(*width)+position:position);
+		int aboveLimit=(((*y)>0  )?position-(*width):position);
 		// vertical gradient : horizontal edge
-		else if (dir == 2)
+		if (dir == 2)
 		{
-			float above = g_mag[y - ((y>0  )*(*width))+x];
-			float below = g_mag[y + ((y<(*height)-(*width))*(*width))+x];
-			return (g_mag[y+x] >= above && g_mag[y+x] >= below);
+			float above = g_mag[aboveLimit];
+			float below = g_mag[belowLimit];
+			return(g_mag[position] >= above && g_mag[position] >= below);
 		}
 		// diagonal gradient : diagonal edge
-		else if (dir == 1)
+		if (dir == 1)
 		{
-			float above_l = g_mag[y - ((y>0  )*(*width))+x - (x>0  )];
-			float below_r = g_mag[y + ((y<(*height)-(*width))*(*width))+x + (x<(*width)-1)];
-			return (g_mag[y+x] >= above_l && g_mag[y+x] >= below_r);
+			float above_l = g_mag[aboveLimit- ((*x)>0  )];
+			float below_r = g_mag[belowLimit+ ((*x)<(*width)-1)];
+			return(g_mag[position] >= above_l && g_mag[position] >= below_r);
 		}
 		// diagonal gradient : diagonal edge
-		else if (dir == 3)
+		if (dir == 3)
 		{
-			float above_r = g_mag[y - (((y>0  ))*(*width))+x + (x<(*width)-1)];
-			float below_l = g_mag[y + (((y<(*height)-1))*(*width))+x - (x>0  )];
-			return (g_mag[y+x] >= above_r && g_mag[y+x] >= below_l);
+			float above_r = g_mag[aboveLimit+ ((*x)<(*width)-1)];
+			float below_l = g_mag[belowLimit- ((*x)>0  )];
+			return(g_mag[position] >= above_r && g_mag[position] >= below_l);
 		}
 	}
 	return 0;
 }
 
-void detect_edges(Image *img, float sigma, float threshold, unsigned char *edge_pix, PList *edge_pts)
+void detect_edges(Image* img, float sigma, float threshold, unsigned char* edge_pix, PList *edge_pts)
 {
 	int x, y;
 	const int width = img->w;
@@ -218,16 +210,16 @@ void detect_edges(Image *img, float sigma, float threshold, unsigned char *edge_
 	const int maxRowLimit=height-width;
 	const int maxColumnLimit=width-1;
 	// convert image to grayscale
-	float *gray = array_create(&size);
-	convert_grayscale(img, gray);
+	float* gray = array_create(&size);
+	convert_grayscale(img->r,img->g,img->b,gray,&height);
 
 	// blur grayscale image
-	float *gray2 = array_create(&size);
+	float* gray2 = array_create(&size);
 	gaussian_blur(gray, gray2, &width, &height, sigma);
 
 	// compute gradient of blurred image
-	float *g_mag = array_create(&size);
-	float *g_ang = array_create(&size);
+	float* g_mag = array_create(&size);
+	float* g_ang = array_create(&size);
 	compute_gradient(gray2, &width, &height, g_mag, g_ang);
 
 	// mark edge pixels
@@ -235,7 +227,7 @@ void detect_edges(Image *img, float sigma, float threshold, unsigned char *edge_
 	for (y = 0; y < height; y+=width)
 	for (x = 0; x < width; x++)
 	{
-		PIX(y,x) = is_edge(g_mag,g_ang,threshold,x,y,&width,&height) ? 255 : 0;
+		PIX(y,x) = is_edge(g_mag,g_ang,&threshold,&x,&y,&width,&height) ? 255 : 0;
 	}
 
 	// connect horizontal edges

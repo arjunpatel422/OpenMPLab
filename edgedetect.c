@@ -147,37 +147,37 @@ void gaussian_blur(float **src, float **dst, const int* width, const int* height
 void compute_gradient(float **src, const int* width, const int* height, float **g_mag, float **g_ang)
 {
 	// Sobel mask values
-	const float mx0[] = {-0.25f, 0.f, 0.25f};
-	const float mx1[] = {-0.5f , 0.f, 0.5f };
-	const float mx2[] = {-0.25f, 0.f, 0.25f};
-	const float *mx[] = {mx0, mx1, mx2};
-	const float my0[] = {-0.25f,-0.5f,-0.25f};
-	const float my1[] = { 0.f  , 0.f , 0.f  };
-	const float my2[] = { 0.25f, 0.5f, 0.25f};
-	const float *my[] = {my0, my1, my2};
+	const float mx[]={-0.25f, 0.f, 0.25f,-0.5f , 0.f, 0.5f,-0.25f, 0.f, 0.25f};
+	const float my[]={-0.25f,-0.5f,-0.25f,0.f  , 0.f , 0.f,0.25f, 0.5f, 0.25f};
 	const int maxRowLimit=(*height)-1;
 	const int maxColumnLimit=(*width)-1;
-	int y, x, i, j, r, c;
+	int y, x, i, j, r, c,mPosition,srcRow,srcColumn;
 	for (y = 0; y < (*height); y++)
 	for (x = 0; x < (*width); x++)
 	{
 		float gx = 0.f, gy = 0.f;
+		mPosition=0;
+		srcRow=y-1;
 		for (i = 0; i < 3; i++)
-		for (j = 0; j < 3; j++)
 		{
-			r = y+i-1; if(r<0)r=0; else if(r>maxRowLimit)r=maxRowLimit;
-			c = x+j-1; if(c<0)c=0; else if(c>maxColumnLimit)c=maxColumnLimit;
-			
-			gx += src[r][c] * mx[i][j];
-			gy += src[r][c] * my[i][j];
+			srcColumn=x-1;
+			for (j = 0; j < 3; j++)
+			{
+				r = srcRow; if(r<0)r=0; else if(r>maxRowLimit)r=maxRowLimit;
+				c = srcColumn; if(c<0)c=0; else if(c>maxColumnLimit)c=maxColumnLimit;			
+				gx += src[r][c] * mx[mPosition];
+				gy += src[r][c] * my[mPosition];
+				mPosition++;
+				srcColumn++;
+			}
+			srcRow++;
 		}
 		g_mag[y][x] = hypotf(gy, gx);
 		g_ang[y][x] = atan2f(gy, gx);
 	}
 }
 
-int
-is_edge(float **g_mag, float **g_ang, float threshold, int x, int y, const int* width, const int* height)
+int is_edge(float **g_mag, float **g_ang, float threshold, int x, int y, const int* width, const int* height)
 {
 	if (g_mag[y][x] >= threshold)
 	{

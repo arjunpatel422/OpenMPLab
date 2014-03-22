@@ -134,36 +134,84 @@ void gaussian_blur(float* src, float* dst, const int* width, const int* height, 
 
 void compute_gradient(float* src, const int* width, const int* height, float* g_mag, float* g_ang)
 {
-	// Sobel mask values
 	const float mx[]={-0.25f, 0.f, 0.25f,-0.5f , 0.f, 0.5f,-0.25f, 0.f, 0.25f};
-	const float my[]={-0.25f,-0.5f,-0.25f,0.f  , 0.f , 0.f,0.25f, 0.5f, 0.25f};
+	const float my[]={-0.25f,-0.5f,-0.25f,0.f  , 0.f , 0.f, 0.25f, 0.5f, 0.25f};
 	const int maxRowLimit=(*height)-(*width);
 	const int maxColumnLimit=(*width)-1;
-	int y, x, i, j, r, c,mPosition,srcRow,srcColumn;
+	int y, x, i,r, srcPosition,mPosition;
 	float gx,gy;
-	#pragma omp parallel for private(y,x,i,j,r,c,mPosition,srcRow,srcColumn,gx,gy)
-	for (y = (*width); y < maxRowLimit; y+=(*width))
-	for (x = 0; x < (*width); x++)
+
+	#pragma omp parallel for private(y,x,i,r,srcPosition,mPosition,gx,gy)
+	for (y =(*width); y <maxRowLimit; y+=(*width))
 	{
-		gx = 0.f, gy = 0.f;
+		//Covers West Edge
+		gx = 0.f;
+		gy = 0.f;
+		r=y-(*width);
 		mPosition=0;
-		srcRow=y-(*width);
 		for (i = 0; i < 3; i++)
 		{
-			srcColumn=x-1;
-			for (j = 0; j < 3; j++)
-			{
-				r = srcRow; if(r<0)r=0; else if(r>maxRowLimit)r=maxRowLimit;
-				c = srcColumn; if(c<0)c=0; else if(c>maxColumnLimit)c=maxColumnLimit;			
-				gx += src[r+c] * mx[mPosition];
-				gy += src[r+c] * my[mPosition];
-				mPosition++;
-				srcColumn++;
-			}
-			srcRow+=(*width);
+			srcPosition=r;
+			gx += src[srcPosition] * (mx[mPosition]+mx[mPosition+1]);
+			gy += src[srcPosition] * (my[mPosition]+my[mPosition+1]);
+			mPosition++;mPosition++;
+			srcPosition++;
+			gx+=src[srcPosition]*mx[mPosition];
+			gy+=src[srcPosition]*my[mPosition];
+			mPosition++;
+			r+=(*width);
 		}
-		g_mag[y+x] = hypotf(gy, gx);
-		g_ang[y+x] = atan2f(gy, gx);
+		g_mag[y] = hypotf(gy, gx);
+		g_ang[y] = atan2f(gy, gx);
+		//End of Covering West Edge
+		for (x = 1; x <maxColumnLimit; x++)
+		{
+			gx = 0.f;
+			gy = 0.f;
+			r=y-(*width)-1;
+			mPosition=0;
+			for (i = 0; i < 3; i++)
+				{
+					srcPosition=r+x;
+					gx += src[srcPosition] * mx[mPosition];
+					gy += src[srcPosition] * my[mPosition];
+					srcPosition++;
+					mPosition++;
+					gx += src[srcPosition] * mx[mPosition];
+					gy += src[srcPosition] * my[mPosition];
+					srcPosition++;
+					mPosition++;
+					gx += src[srcPosition] * mx[mPosition];
+					gy += src[srcPosition] * my[mPosition];
+					srcPosition++;
+					mPosition++;
+					r+=(*width);
+				}
+			i=x+y;
+			g_mag[i] = hypotf(gy, gx);
+			g_ang[i] = atan2f(gy, gx);
+		}
+		//Covers East Edge
+		gx = 0.f;
+		gy = 0.f;
+		r=y-(*width)-1;
+		mPosition=0;
+		for (i = 0; i < 3; i++)
+		{
+			srcPosition=r+maxColumnLimit;
+			gx+=src[srcPosition]*mx[mPosition];
+			gy+=src[srcPosition]*my[mPosition];
+			mPosition++;
+			srcPosition++;
+			gx+=src[srcPosition]*(mx[mPosition]+mx[mPosition+1]);
+			gy+=src[srcPosition]*(my[mPosition]+my[mPosition+1]);
+			mPosition++;mPosition++;
+			r+=(*width);
+		}
+		i=y+maxColumnLimit;
+		g_mag[i] = hypotf(gy, gx);
+		g_ang[i] = atan2f(gy, gx);
+		//Finishes covering east edge
 	}
 }
 

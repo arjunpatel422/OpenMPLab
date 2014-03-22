@@ -138,97 +138,82 @@ void compute_gradient(float* src, const int* width, const int* height, float* g_
 	const float my[]={-0.25f,-0.5f,-0.25f,0.f  , 0.f , 0.f, 0.25f, 0.5f, 0.25f};
 	const int maxRowLimit=(*height)-(*width);
 	const int maxColumnLimit=(*width)-1;
-	int y, x, i,r, srcPosition,mPosition;
+	const int doubleWidth=((*width)+(*width));
+	int y, x, srcPosition,mPosition;
 	float gx,gy;
 
-	#pragma omp parallel for private(y,x,i,r,srcPosition,mPosition,gx,gy)
+	#pragma omp parallel for private(y,x,srcPosition,mPosition,gx,gy)
 	for (y =(*width); y <maxRowLimit; y+=(*width))
 	{
 		//Covers West Edge
 		gx = 0.f;
 		gy = 0.f;
-		r=y-(*width);
-		mPosition=0;
-		for (i = 0; i < 3; i++)
+		srcPosition=y-(*width);
+		for (mPosition = 0; mPosition < 9; srcPosition+=(*width))
 		{
-			srcPosition=r;
 			gx += src[srcPosition] * (mx[mPosition]+mx[mPosition+1]);
-			gy += src[srcPosition] * (my[mPosition]+my[mPosition+1]);
-			mPosition++;mPosition++;
-			srcPosition++;
-			gx+=src[srcPosition]*mx[mPosition];
-			gy+=src[srcPosition]*my[mPosition];
+			gy += src[srcPosition++] * (my[mPosition]+my[mPosition+1]);
 			mPosition++;
-			r+=(*width);
+			gx+=src[srcPosition]*mx[++mPosition];
+			gy+=src[srcPosition--]*my[mPosition++];
 		}
-		g_mag[y] = hypotf(gy, gx);
-		g_ang[y] = atan2f(gy, gx);
+		srcPosition=y;
+		g_mag[srcPosition] = hypotf(gy, gx);
+		g_ang[srcPosition] = atan2f(gy, gx);
 		//End of Covering West Edge
+		srcPosition++;
 		for (x = 1; x <maxColumnLimit; x++)
 		{
 			gx = 0.f;
 			gy = 0.f;
-			r=y-(*width)-1;
-			mPosition=0;
-			for (i = 0; i < 3; i++)
-				{
-					srcPosition=r+x;
-					gx += src[srcPosition] * mx[mPosition];
-					gy += src[srcPosition] * my[mPosition];
-					srcPosition++;
-					mPosition++;
-					gx += src[srcPosition] * mx[mPosition];
-					gy += src[srcPosition] * my[mPosition];
-					srcPosition++;
-					mPosition++;
-					gx += src[srcPosition] * mx[mPosition];
-					gy += src[srcPosition] * my[mPosition];
-					srcPosition++;
-					mPosition++;
-					r+=(*width);
-				}
-			i=x+y;
-			g_mag[i] = hypotf(gy, gx);
-			g_ang[i] = atan2f(gy, gx);
+			srcPosition-=(*width);
+			for (mPosition=0; mPosition< 9; srcPosition+=(*width))
+			{
+				gx += src[--srcPosition] * mx[mPosition];
+				gy += src[srcPosition++] * my[mPosition++];
+				gx += src[srcPosition] * mx[mPosition];
+				gy += src[srcPosition++] * my[mPosition++];
+				gx += src[srcPosition] * mx[mPosition];
+				gy += src[srcPosition--] * my[mPosition++];
+			}
+			srcPosition-=doubleWidth;
+			g_mag[srcPosition] = hypotf(gy, gx);
+			g_ang[srcPosition] = atan2f(gy, gx);
+			srcPosition++;
 		}
 		//Covers East Edge
 		gx = 0.f;
 		gy = 0.f;
-		r=y-(*width)-1;
-		mPosition=0;
-		for (i = 0; i < 3; i++)
+		srcPosition-=(*width);
+		for (mPosition=0; mPosition < 9; srcPosition+=(*width))
 		{
-			srcPosition=r+maxColumnLimit;
-			gx+=src[srcPosition]*mx[mPosition];
-			gy+=src[srcPosition]*my[mPosition];
-			mPosition++;
-			srcPosition++;
+			gx+=src[--srcPosition]*mx[mPosition];
+			gy+=src[srcPosition++]*my[mPosition++];
 			gx+=src[srcPosition]*(mx[mPosition]+mx[mPosition+1]);
 			gy+=src[srcPosition]*(my[mPosition]+my[mPosition+1]);
-			mPosition++;mPosition++;
-			r+=(*width);
+			mPosition+=2;
 		}
-		i=y+maxColumnLimit;
-		g_mag[i] = hypotf(gy, gx);
-		g_ang[i] = atan2f(gy, gx);
+		srcPosition-=doubleWidth;
+		g_mag[srcPosition] = hypotf(gy, gx);
+		g_ang[srcPosition] = atan2f(gy, gx);
 		//Finishes covering east edge
 	}
 }
 
-int is_edge(float* g_mag, float* g_ang, float* threshold, const int* x, const int* y, const int* width, const int* height)
+int is_edge(float* g_mag, float* g_ang, float* threshold, const int* x, const int* y, const int* width, const int* maxColumnLimit,const int* maxRowLimit)
 {
 	int position=(*y)+(*x);
 	if (g_mag[position] >= (*threshold))
 	{
 		int dir = ((int) roundf(g_ang[position]/M_PI_4) + 4) % 4;
 		// horizontal gradient : vertical edge
-		if (dir == 0)
+		if (!dir)
 		{
 			float left  = g_mag[position- ((*x)>0  )];
-			float right = g_mag[position+ ((*x)<(*width)-1)];
+			float right = g_mag[position+ ((*x)<(*maxColumnLimit))];
 			return (g_mag[position] >= left && g_mag[position] >= right);
 		}
-		int belowLimit=(((*y)<(*height)-(*width))?(*width)+position:position);
+		int belowLimit=(((*y)<(*maxRowLimit))?(*width)+position:position);
 		int aboveLimit=(((*y)>0  )?position-(*width):position);
 		// vertical gradient : horizontal edge
 		if (dir == 2)
@@ -238,16 +223,16 @@ int is_edge(float* g_mag, float* g_ang, float* threshold, const int* x, const in
 			return(g_mag[position] >= above && g_mag[position] >= below);
 		}
 		// diagonal gradient : diagonal edge
-		if (dir == 1)
+		else if (dir == 1)
 		{
 			float above_l = g_mag[aboveLimit- ((*x)>0  )];
-			float below_r = g_mag[belowLimit+ ((*x)<(*width)-1)];
+			float below_r = g_mag[belowLimit+ ((*x)<(*maxColumnLimit))];
 			return(g_mag[position] >= above_l && g_mag[position] >= below_r);
 		}
 		// diagonal gradient : diagonal edge
-		if (dir == 3)
+		else if (dir == 3)
 		{
-			float above_r = g_mag[aboveLimit+ ((*x)<(*width)-1)];
+			float above_r = g_mag[aboveLimit+ ((*x)<(*maxColumnLimit))];
 			float below_l = g_mag[belowLimit- ((*x)>0  )];
 			return(g_mag[position] >= above_r && g_mag[position] >= below_l);
 		}
@@ -284,7 +269,7 @@ void detect_edges(Image* img, float sigma, float threshold, unsigned char* edge_
 		for (y = 0; y < height; y+=width)
 		for (x = 0; x < width; x++)
 		{
-			PIX(y,x) = is_edge(g_mag,g_ang,&threshold,&x,&y,&width,&height) ? 255 : 0;
+			PIX(y,x) = is_edge(g_mag,g_ang,&threshold,&x,&y,&width,&maxColumnLimit,&maxRowLimit) ? 255 : 0;
 		}
 		
 		// connect horizontal edges

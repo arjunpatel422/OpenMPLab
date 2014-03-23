@@ -2,21 +2,21 @@
 #include <math.h>
 #include <stdlib.h>
 
-float * array_create(const int* size)
+float * array_create(const int* size) //This function is just kept for code clarity
 {
-	return (float*)malloc(*size);
+	return (float*)malloc(*size); //This just casts it as a safety
 }
 
-void array_free(float *ptr)
+void array_free(float *ptr) //This code stops redundancy
 {
-	if (ptr) 
+	if (ptr) //This frees the dynamic memory
 		free(ptr);
 }
 
 void convert_grayscale(float* r, float* g, float* b, float* gray, const int* size)
 {
 	int position;
-	#pragma omp for
+	#pragma omp for//This is parallelized because there are a lot of iterations and barely any code to do
 	for (position= 0; position < (*size); position++)
 		gray[position] = (r[position] + g[position] + b[position]) / 3.f;
 }
@@ -46,9 +46,10 @@ void gaussian_blur(float* src, float* dst, const int* width, const int* height, 
 	const int xmax = (*width) - halfkColumn;
 	const int ymax = (*height)-halfkRow;
 	const int maxColumnLimit=(*width)-1;
-	const int ringbufSize=(*height)/(*width);
-	const int ringbufSizeLimit=ringbufSize-1;
-	const int ringbufMax=ringbufSize-ksizeLimit;
+	const int ringbufSize=(*height)/(*width); //These were created so ringbuf wouldn't have to be ridiculously large
+	const int ringbufArraySize=ringbufSize*sizeof(float);//This is to reduce multiplication
+	const int ringbufSizeLimit=ringbufSize-1; //This allows instant access to the end of the pointer
+	const int ringbufMax=ringbufSize-ksizeLimit;//This is for simplicity
 	float scale = -0.5f/(sigma*sigma);
 	float sum = 0.f,tmp,t;
 	float *kernel;
@@ -77,8 +78,8 @@ void gaussian_blur(float* src, float* dst, const int* width, const int* height, 
 		kernel[y] *= scale;
 	#pragma omp parallel private (y,sum,tmp)
 	{
-		int x,row,column,temp,position,fixedy;
-		float sum2=1.f;
+		int x,row,column,temp,position,fixedy;//The fixedy variable is designed to act as a setter for the y variable and increments automatically
+		float sum2=1.f;	//The position variable is done to always point to where the work is and be independent of other variables as much as possible
 		// blur each row
 		#pragma omp for
 		for (row = 0; row < (*height); row+=(*width))
@@ -88,24 +89,22 @@ void gaussian_blur(float* src, float* dst, const int* width, const int* height, 
 			fixedy=position+1;
 			for (column = 0; column < halfkColumnPlus1; column++ )
 				{
-					x=0;
-					y =fixedy;
 					sum = 0.f;
-					for (  ; x < (halfkColumnPlus1- column) ; x++)  
+					for (x=0  ; x < (halfkColumnPlus1- column) ; x++)  
 						sum += kernel[x];	//adds the first halfk plus 1 elements of kernel to the sum.   
 					sum *= tmp;  //adds up the first halfk plus 1 elements of ringbuf/source terms to the sum. 
-					for (  ; x < ksizeLimit; x++, y++)
+					for (y =fixedy  ; x < ksizeLimit; x++, y++)
 						sum += kernel[x] * src[y]; 
-					dst[position++] = sum + (kernel[x] * src[y]);	
+					dst[position++] = sum + (kernel[x] * src[y]); //I increment the position repeatedly for every column	
 				}
 								
 			for (; column < xmax ; column++ )
 			{
-				y =fixedy;
-				fixedy++;
 				sum = 0.f;
 				for (x=0  ; x < (halfkColumnPlus1 - column) ; x++)   
-					sum = sum + (kernel[x] * tmp);
+					sum+=(kernel[x] * tmp);
+				y =fixedy;//This resets y to what it should be
+				fixedy++;//I do this here for better efficiency while it is current in memory
 				for (  ; x < ksizeLimit ; x++, y++)
 					sum += kernel[x] * src[y]; 
 				dst[position++] = sum + (kernel[x] * src[y]);
@@ -125,57 +124,54 @@ void gaussian_blur(float* src, float* dst, const int* width, const int* height, 
 				dst[position++] = sum;
 			}
 		}
-		float * bigRingbuf = malloc(ringbufSize*sizeof(float));	
+		float * ringbuf = malloc(ringbufArraySize);	
 		// blur each column
 		#pragma omp for
 		for (column = 0; column < (*width); column++)
 		{
 			tmp  = dst[column];
 			for (fixedy=column,y = 0 ; y <ringbufSize ; y++,fixedy+=(*width))
-				bigRingbuf[y] = dst[fixedy];
-			position=column;
-			for (fixedy=0,row = 0 ; row < halfkRowPlusWidth ; row+=(*width))
+				ringbuf[y] = dst[fixedy];
+			for (position=column,row = 0 ; row < halfkRowPlusWidth ; row+=(*width))
 			{
 				sum = 0.f;		
 				for (x = 0; x < (halfkColumnPlus1-fixedy) ; x++)
 					sum += kernel[x];
 				y =1;	
 				for (sum *= tmp; x < ksizeLimit; x++, y++)
-					sum+=(kernel[x] * bigRingbuf[y]); 	
-				dst[position] = sum + (kernel[x] * bigRingbuf[y]);
+					sum+=(kernel[x] * ringbuf[y]); 	
+				dst[position] = sum + (kernel[x] * ringbuf[y]);
 				position+=(*width);
-				fixedy++;
 			}
 			for (fixedy=1; row < ymax ; row+=(*width))
 			{
 				sum = 0.f;
-				for (x = 0  ; x < (halfkColumnPlus1 - row/(*width)) ; x++)
+				for (x = 0  ; x < (halfkColumnPlus1-fixedy) ; x++)
 					sum+=(kernel[x] * tmp);	
-				for (y=fixedy; x < ksizeLimit; x++, y++)
-					sum+=(kernel[x] * bigRingbuf[y]); 	
-				dst[position] = sum + (kernel[x] * bigRingbuf[y]);
+				y=fixedy;
+				for (fixedy++; x < ksizeLimit; x++, y++)
+					sum+=(kernel[x] * ringbuf[y]); 	
+				dst[position] = sum + (kernel[x] * ringbuf[y]);
 				position+=(*width);
-				fixedy++;
 			}
-			tmp= bigRingbuf[ringbufSizeLimit];
+			tmp= ringbuf[ringbufSizeLimit];
 			temp=ksizeMinus2;
-			fixedy=ringbufMax;
-			for (; row < (*height) ; row+=(*width), temp--)
+			for (fixedy=ringbufMax; row < (*height) ; row+=(*width), temp--)
 			{		
-				sum = 0.f;
 				y =fixedy;
+				fixedy++;
+				sum = 0.f;
 				for (x = 0 ; x < temp ; x++, y++)
-					sum += kernel[x] * bigRingbuf[y]; 
+					sum += kernel[x] * ringbuf[y]; 
 				for (sum2 = 0.f ; x < ksizePlus1; x++)
 					sum2 += kernel[x];
 				sum += (sum2 * tmp);
 				dst[position] = sum;
 				position+=(*width);
-				fixedy++;
 			}
 		}
-		if(bigRingbuf)
-			free(bigRingbuf);
+		if(ringbuf)
+			free(ringbuf);
 	}
 	// clean up
 	free(kernel);
@@ -183,57 +179,55 @@ void gaussian_blur(float* src, float* dst, const int* width, const int* height, 
 
 void compute_gradient(float* src, const int* width, const int* height, float* g_mag, float* g_ang)
 {
-	const float mx[]={-0.25f, 0.f, 0.25f,-0.5f , 0.f, 0.5f,-0.25f, 0.f, 0.25f};
-	const float my[]={-0.25f,-0.5f,-0.25f,0.f  , 0.f , 0.f, 0.25f, 0.5f, 0.25f};
+	const float mx[]={-0.25f, 0.f, 0.25f,-0.5f , 0.f, 0.5f,-0.25f, 0.f, 0.25f}; //This is for better efficiency for multiplication
+	const float my[]={-0.25f,-0.5f,-0.25f,0.f  , 0.f , 0.f, 0.25f, 0.5f, 0.25f};//This is for the same reason. 
 	const int maxRowLimit=(*height)-(*width);
 	const int maxColumnLimit=(*width)-1;
 	const int doubleWidth=((*width)+(*width));
 	int y, x, srcPosition,mPosition;
 	float gx,gy;
-
+	//The main idea for what I do is to make all calculations independent of other variables for fewer operations
 	#pragma omp parallel for private(y,x,srcPosition,mPosition,gx,gy)
 	for (y =(*width); y <maxRowLimit; y+=(*width))
 	{
 		//Covers West Edge
 		gx = 0.f;
 		gy = 0.f;
-		srcPosition=y-(*width);
-		for (mPosition = 0; mPosition < 9; srcPosition+=(*width))
+		srcPosition=y-(*width); //This makes it go one row below what it's currently at
+		for (mPosition = 0; mPosition < 9; srcPosition+=(*width)) //This makes use of the matrix position as a check to see if everything is done
 		{
-			gx += src[srcPosition] * (mx[mPosition]+mx[mPosition+1]);
+			gx += src[srcPosition] * (mx[mPosition]+mx[mPosition+1]); //This factoring reduces multiplication, an expensive operation
 			gy += src[srcPosition++] * (my[mPosition]+my[mPosition+1]);
-			mPosition++;
+			mPosition++; //This is what increments the position in the array it needs to multiply by
 			gx+=src[srcPosition]*mx[++mPosition];
 			gy+=src[srcPosition--]*my[mPosition++];
 		}
-		srcPosition=y;
+		srcPosition=y; //This resets the srcPosition back to what it should be
 		g_mag[srcPosition] = hypotf(gy, gx);
-		g_ang[srcPosition] = atan2f(gy, gx);
+		g_ang[srcPosition++] = atan2f(gy, gx); //The ++ makes srcPosition accurate for the next iterations
 		//End of Covering West Edge
-		srcPosition++;
 		for (x = 1; x <maxColumnLimit; x++)
 		{
 			gx = 0.f;
 			gy = 0.f;
-			srcPosition-=(*width);
+			srcPosition-=(*width); //This makes the row used be below the current row
 			for (mPosition=0; mPosition< 9; srcPosition+=(*width))
 			{
-				gx += src[--srcPosition] * mx[mPosition];
+				gx += src[--srcPosition] * mx[mPosition]; //This uses the same principles as before but no factoring can be done
 				gy += src[srcPosition++] * my[mPosition++];
 				gx += src[srcPosition] * mx[mPosition];
 				gy += src[srcPosition++] * my[mPosition++];
 				gx += src[srcPosition] * mx[mPosition];
-				gy += src[srcPosition--] * my[mPosition++];
+				gy += src[srcPosition--] * my[mPosition++];//All the -- and ++ operators do is essentially reset the x coordinate every iteration
 			}
-			srcPosition-=doubleWidth;
+			srcPosition-=doubleWidth; //This reset makes it so srcPosition can also manage to always have the correct x coordinate
 			g_mag[srcPosition] = hypotf(gy, gx);
-			g_ang[srcPosition] = atan2f(gy, gx);
-			srcPosition++;
+			g_ang[srcPosition++] = atan2f(gy, gx);//The srcPosition then increments along with x 
 		}
 		//Covers East Edge
 		gx = 0.f;
 		gy = 0.f;
-		srcPosition-=(*width);
+		srcPosition-=(*width);//The x coordinate is already correct from the previous iteration.
 		for (mPosition=0; mPosition < 9; srcPosition+=(*width))
 		{
 			gx+=src[--srcPosition]*mx[mPosition];
@@ -242,7 +236,7 @@ void compute_gradient(float* src, const int* width, const int* height, float* g_
 			gy+=src[srcPosition]*(my[mPosition]+my[mPosition+1]);
 			mPosition+=2;
 		}
-		srcPosition-=doubleWidth;
+		srcPosition-=doubleWidth;//This resets it to what it should be 
 		g_mag[srcPosition] = hypotf(gy, gx);
 		g_ang[srcPosition] = atan2f(gy, gx);
 		//Finishes covering east edge
@@ -251,7 +245,7 @@ void compute_gradient(float* src, const int* width, const int* height, float* g_
 
 int is_edge(float* g_mag, float* g_ang, float* threshold, const int* x, const int* y, const int* width, const int* maxColumnLimit,const int* maxRowLimit)
 {
-	int position=(*y)+(*x);
+	int position=(*y)+(*x); //This makes a much better reference to the current position in the array
 	if (g_mag[position] >= (*threshold))
 	{
 		int dir = ((int) roundf(g_ang[position]/M_PI_4) + 4) % 4;
@@ -262,8 +256,8 @@ int is_edge(float* g_mag, float* g_ang, float* threshold, const int* x, const in
 			float right = g_mag[position+ ((*x)<(*maxColumnLimit))];
 			return (g_mag[position] >= left && g_mag[position] >= right);
 		}
-		int belowLimit=(((*y)<(*maxRowLimit))?(*width)+position:position);
-		int aboveLimit=(((*y)>0  )?position-(*width):position);
+		int belowLimit=(((*y)<(*maxRowLimit))?(*width)+position:position); //These two expressions simplify a lot of calculations
+		int aboveLimit=(((*y)>0  )?position-(*width):position); //by determing edge conditions or not
 		// vertical gradient : horizontal edge
 		if (dir == 2)
 		{
@@ -293,9 +287,9 @@ void detect_edges(Image* img, float sigma, float threshold, unsigned char* edge_
 {
 	const int width = img->w;
 	const int height = (img->h)*width;
-	const int size=height*sizeof(float);
-	const int maxRowLimit=height-width;
-	const int maxColumnLimit=width-1;
+	const int size=height*sizeof(float); //This gives the array size
+	const int maxRowLimit=height-width; //This reduces the number of computations by establishing a limit
+	const int maxColumnLimit=width-1; //This reduces computation
 	int x,y;
 	// convert image to grayscale
 	float* gray = array_create(&size);
@@ -370,3 +364,12 @@ void detect_edges(Image* img, float sigma, float threshold, unsigned char* edge_
 	array_free(gray2);
 	array_free(gray);
 }
+
+// new record     detect_edges: 0.028357 seconds
+
+
+
+
+
+
+

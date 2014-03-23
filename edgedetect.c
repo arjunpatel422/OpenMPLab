@@ -36,17 +36,23 @@ float convolve(float* kernel, float* ringbuf, const int* ksize, int i0)
 void gaussian_blur(float* src, float* dst, const int* width, const int* height, float sigma)
 {
 	const int ksize = (int)(sigma * 2.f * 4.f + 1) | 1;
-	const int ksizeColumnLimit=ksize-1;
+	const int ksizePlus1=ksize+1;
+	const int ksizeLimit=ksize-1;
+	const int ksizeMinus2=ksizeLimit-1;
 	const int halfkColumn = ksize / 2;
+	const int halfkColumnPlus1=halfkColumn+1;
 	const int halfkRow=halfkColumn*(*width);
+	const int halfkRowPlusWidth=halfkRow+(*width);
 	const int xmax = (*width) - halfkColumn;
 	const int ymax = (*height)-halfkRow;
 	const int maxColumnLimit=(*width)-1;
-	const int maxRowLimit=(*height)-(*width);
+	const int ringbufSize=(*height)/(*width);
+	const int ringbufSizeLimit=ringbufSize-1;
+	const int ringbufMax=ringbufSize-ksizeLimit;
 	float scale = -0.5f/(sigma*sigma);
 	float sum = 0.f,tmp,t;
-	float *kernel, *ringbuf;
-	int x, y, i,position,bufi0;
+	float *kernel;
+	int y;
 	// if sigma too small, just copy src to dst
 	if (ksize <= 1)
 	{
@@ -58,75 +64,118 @@ void gaussian_blur(float* src, float* dst, const int* width, const int* height, 
 	// create Gaussian kernel
 	kernel = malloc(ksize * sizeof(float));
 
-	for (i = 0; i < ksize; i++)
+	for (y = 0; y < ksize; y++)
 	{
-		tmp = (float)(i - halfkColumn);
+		tmp = (float)(y - halfkColumn);
 		t = expf(scale * tmp * tmp);
-		kernel[i] = t;
+		kernel[y] = t;
 		sum += t;
 	}
 
 	scale = 1.f / sum;
-	for (i = 0; i < ksize; i++)
-		kernel[i] *= scale;
-	#pragma omp parallel private(x,y,ringbuf,tmp,bufi0,position)
-	// blur each row
+	for (y = 0; y < ksize; y++)
+		kernel[y] *= scale;
+	#pragma omp parallel private (y,sum,tmp)
 	{
-		ringbuf = malloc(ksize * sizeof(float));
+		int x,row,column,temp,position,fixedy;
+		float sum2=1.f;
+		// blur each row
 		#pragma omp for
-		for (y = 0; y < (*height); y+=(*width))
+		for (row = 0; row < (*height); row+=(*width))
 		{
-			bufi0 = ksizeColumnLimit;
-			tmp = src[y];
-			for (x = 0; x < halfkColumn  ; x++) ringbuf[x] = tmp;
-			for ( position=y; x < ksizeColumnLimit; x++) ringbuf[x] = src[position++];
-			position=y;
-			for (x = 0; x < xmax; x++)
+			position=row;
+			tmp = src[row];
+			fixedy=position+1;
+			for (column = 0; column < halfkColumnPlus1; column++ )
+				{
+					x=0;
+					y =fixedy;
+					sum = 0.f;
+					for (  ; x < (halfkColumnPlus1- column) ; x++)  
+						sum += kernel[x];	//adds the first halfk plus 1 elements of kernel to the sum.   
+					sum *= tmp;  //adds up the first halfk plus 1 elements of ringbuf/source terms to the sum. 
+					for (  ; x < ksizeLimit; x++, y++)
+						sum += kernel[x] * src[y]; 
+					dst[position++] = sum + (kernel[x] * src[y]);	
+				}
+								
+			for (; column < xmax ; column++ )
 			{
-				ringbuf[bufi0++] = src[position+halfkColumn];
-				if (bufi0 == ksize) bufi0 = 0;
-				dst[position++] = convolve(kernel, ringbuf, &ksize, bufi0);
-			}
-
-			for (tmp = src[y+maxColumnLimit] ; x < (*width); x++)
+				y =fixedy;
+				fixedy++;
+				sum = 0.f;
+				for (x=0  ; x < (halfkColumnPlus1 - column) ; x++)   
+					sum = sum + (kernel[x] * tmp);
+				for (  ; x < ksizeLimit ; x++, y++)
+					sum += kernel[x] * src[y]; 
+				dst[position++] = sum + (kernel[x] * src[y]);
+			}				
+			tmp = src[row+maxColumnLimit];
+			temp=ksizeMinus2;
+			for (fixedy=position-halfkColumn; column < (*width) ; column++, temp--)
 			{
-				ringbuf[bufi0++] = tmp;
-				if (bufi0 == ksize) bufi0 = 0;
-				dst[position++] = convolve(kernel, ringbuf, &ksize, bufi0);
+				y =fixedy;
+				fixedy++;
+				sum = 0.f;
+				for (x = 0; x < temp ; x++, y++)
+					sum += kernel[x] * src[y]; 
+				for (sum2 = 0.f ; x < ksizePlus1 ; x++)
+					sum2 += kernel[x];
+				sum += (sum2 * tmp);		
+				dst[position++] = sum;
 			}
 		}
-
+		float * bigRingbuf = malloc(ringbufSize*sizeof(float));	
 		// blur each column
 		#pragma omp for
-		for (x = 0; x < (*width); x++)
+		for (column = 0; column < (*width); column++)
 		{
-			bufi0 =ksizeColumnLimit;
-			tmp = dst[x];
-			for (y = 0; y < halfkColumn  ; y++) ringbuf[y] = tmp;
-			for (position=x; y < ksizeColumnLimit; y++)
+			tmp  = dst[column];
+			for (fixedy=column,y = 0 ; y <ringbufSize ; y++,fixedy+=(*width))
+				bigRingbuf[y] = dst[fixedy];
+			position=column;
+			for (fixedy=0,row = 0 ; row < halfkRowPlusWidth ; row+=(*width))
 			{
-				ringbuf[y] = dst[position];
+				sum = 0.f;		
+				for (x = 0; x < (halfkColumnPlus1-fixedy) ; x++)
+					sum += kernel[x];
+				y =1;	
+				for (sum *= tmp; x < ksizeLimit; x++, y++)
+					sum+=(kernel[x] * bigRingbuf[y]); 	
+				dst[position] = sum + (kernel[x] * bigRingbuf[y]);
 				position+=(*width);
+				fixedy++;
 			}
-			position=x;
-			for (y = 0; y < ymax; y+=(*width))
+			for (fixedy=1; row < ymax ; row+=(*width))
 			{
-				ringbuf[bufi0++] = dst[position+halfkRow];
-				if (bufi0 == ksize) bufi0 = 0;
-				dst[position] = convolve(kernel, ringbuf, &ksize, bufi0);
+				sum = 0.f;
+				for (x = 0  ; x < (halfkColumnPlus1 - row/(*width)) ; x++)
+					sum+=(kernel[x] * tmp);	
+				for (y=fixedy; x < ksizeLimit; x++, y++)
+					sum+=(kernel[x] * bigRingbuf[y]); 	
+				dst[position] = sum + (kernel[x] * bigRingbuf[y]);
 				position+=(*width);
+				fixedy++;
 			}
-
-			for (tmp = dst[maxRowLimit+x]; y < (*height); y+=(*width))
-			{
-				ringbuf[bufi0++] = tmp;
-				if (bufi0 == ksize) bufi0 = 0;
-				dst[position] = convolve(kernel, ringbuf, &ksize, bufi0);
+			tmp= bigRingbuf[ringbufSizeLimit];
+			temp=ksizeMinus2;
+			fixedy=ringbufMax;
+			for (; row < (*height) ; row+=(*width), temp--)
+			{		
+				sum = 0.f;
+				y =fixedy;
+				for (x = 0 ; x < temp ; x++, y++)
+					sum += kernel[x] * bigRingbuf[y]; 
+				for (sum2 = 0.f ; x < ksizePlus1; x++)
+					sum2 += kernel[x];
+				sum += (sum2 * tmp);
+				dst[position] = sum;
 				position+=(*width);
+				fixedy++;
 			}
 		}
-		if(ringbuf)
-			free(ringbuf);
+		if(bigRingbuf)
+			free(bigRingbuf);
 	}
 	// clean up
 	free(kernel);
